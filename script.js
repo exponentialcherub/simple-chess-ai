@@ -3,69 +3,349 @@ var board,
 
 /*The "AI" part starts here */
 
-var minimaxRoot =function(depth, game, isMaximisingPlayer) {
+var calculateBestMove = function(game) {
+    var depth = parseInt($('#search-depth').find(':selected').text());
+    var result = minimax(game, depth, -Infinity, Infinity, false);
+    console.log(result[0])
+    console.log(result[1])
+    return result[1];
 
-    var newGameMoves = game.ugly_moves();
-    var bestMove = -9999;
-    var bestMoveFound;
-
-    for(var i = 0; i < newGameMoves.length; i++) {
-        var newGameMove = newGameMoves[i]
-        game.ugly_move(newGameMove);
-        var value = minimax(depth - 1, game, -10000, 10000, !isMaximisingPlayer);
-        game.undo();
-        if(value >= bestMove) {
-            bestMove = value;
-            bestMoveFound = newGameMove;
-        }
-    }
-    return bestMoveFound;
 };
 
-var minimax = function (depth, game, alpha, beta, isMaximisingPlayer) {
+var quiescence = function(game, alpha, beta, maximisingPlayer) {
     positionCount++;
-    if (depth === 0) {
-        return -evaluateBoard(game.board());
+    var eval = evaluateBoard(game);
+    
+    if(eval > beta) {
+        return beta;
     }
+    
+    if(eval > alpha) {
+        alpha = eval;
+    }
+    
+    const captures = game.ugly_captures();
+    const scores = getMVVLVAScores(captures);
+    
+    for(let i = 0; i < captures.length; i++) {
+        nextMove(captures, scores, i, true);
+        
+        game.ugly_move(captures[i]);
+        eval = -quiescence(game, -beta, -alpha, !maximisingPlayer);
+        game.undo();
+        
+        if(eval >= beta){
+            return beta;
+        }
+        
+        if(eval > alpha) {
+            alpha = eval;
+        }
+    }
+    
+    return alpha;
+}
 
-    var newGameMoves = game.ugly_moves();
-
-    if (isMaximisingPlayer) {
-        var bestMove = -9999;
-        for (var i = 0; i < newGameMoves.length; i++) {
+var minimax = function(game, depth, alpha, beta, maximisingPlayer) {
+    positionCount++;
+    if(depth === 0) {
+        return [quiescence(game, alpha, beta, maximisingPlayer), null];
+    }
+    
+    const newGameMoves = sortMoves(game, maximisingPlayer);
+    let bestMove = newGameMoves[0];
+    
+    if(maximisingPlayer) {
+        let maxEval = -Infinity;
+        for(let i = 0; i < newGameMoves.length; i++) {
             game.ugly_move(newGameMoves[i]);
-            bestMove = Math.max(bestMove, minimax(depth - 1, game, alpha, beta, !isMaximisingPlayer));
+            var eval = minimax(game, depth - 1, alpha, beta, false)[0];
             game.undo();
-            alpha = Math.max(alpha, bestMove);
-            if (beta <= alpha) {
-                return bestMove;
+            if(eval > maxEval) {
+                bestMove = newGameMoves[i];
+                maxEval = eval;
+            }
+            
+            alpha = Math.max(alpha, maxEval);
+            if(beta <= alpha) {
+                break;
             }
         }
-        return bestMove;
-    } else {
-        var bestMove = 9999;
-        for (var i = 0; i < newGameMoves.length; i++) {
+        return [maxEval, bestMove];
+    }
+    else {
+        let minEval = Infinity;
+        for(let i = 0; i < newGameMoves.length; i++) {
             game.ugly_move(newGameMoves[i]);
-            bestMove = Math.min(bestMove, minimax(depth - 1, game, alpha, beta, !isMaximisingPlayer));
+            var eval = minimax(game, depth - 1, alpha, beta, true)[0];
             game.undo();
-            beta = Math.min(beta, bestMove);
-            if (beta <= alpha) {
-                return bestMove;
+            if(eval < minEval) {
+                bestMove = newGameMoves[i];
+                minEval = eval;
+            }
+            
+            beta = Math.min(beta, minEval);
+            if(beta <= alpha) {
+                break;
             }
         }
-        return bestMove;
+        
+        return [minEval, bestMove];
     }
-};
+}
 
-var evaluateBoard = function (board) {
-    var totalEvaluation = 0;
+var getScores = function(game, moves) {
+    const scores = [];
+    
+    for(let i = 0; i < moves.length; i++) {
+        game.ugly_move(moves[i]);
+        scores[i] = evaluateBoard(game);
+        game.undo();
+    }    
+    
+    return scores;
+}
+
+var getMVVLVAScores = function(moves) {
+    const scores = [];
+    for(let i = 0; i < moves.length; i++) {
+        if(!moves[i].captured) {
+            console.log("WARN: not a capture move \n" + moves[i]);
+        }
+        
+        scores[i] = 10;
+        
+        switch(moves[i].captured) {
+            case 'k': 
+                scores[i] += 1000;
+            case 'q':
+                scores[i] += 900;
+                break;
+            case 'r':
+                scores[i] += 500;
+                break;
+            case 'b':
+                scores[i] += 400;
+                break;
+            case 'n':
+                scores[i] += 300;
+                break;
+            case 'p':
+                scores[i] += 100;
+            
+        }
+        switch(moves[i].piece){
+            case 'k':
+                scores[i] -= 10;
+                break;
+            case 'q':
+                scores[i] -= 9;
+                break;
+            case 'r':
+                scores[i] -= 5;
+                break;
+            case 'b':
+                scores[i] -= 4;
+                break;
+            case 'n':
+                scores[i] -= 3;
+                break;
+            case 'p':
+                scores[i] -= 1;
+                break;
+            
+        }
+    }
+    
+    return scores;
+}
+
+var sortMoves = function(game, maximisingPlayer) {
+    const moves = game.ugly_moves();
+    const score = getScores(game, moves);
+    
+    const bestMoves = [];
+    const movesCopy = moves.slice();
+    for(let i = 0; i < Math.min(8, moves.length); i++) {
+        let best = maximisingPlayer ? -Infinity : Infinity;
+        let bestIndex = 0;
+        for(let j = 0; j < score.length; j++) {
+            if((maximisingPlayer && score[j] > best) || (!maximisingPlayer && score[j] < best)) {
+                best = score[j];
+                bestIndex = j;
+            }
+        }
+        
+        bestMoves.push(moves[bestIndex]);
+        score[bestIndex] = maximisingPlayer ? -Infinity : Infinity;
+        movesCopy.splice(movesCopy.indexOf(moves[bestIndex]), 1);
+    }
+    
+    return bestMoves.concat(movesCopy);
+}
+
+var nextMove = function(captures, scores, num, maximisingPlayer) {
+    let index = 0;
+    let bestScore = scores[num];
+    let bestNum = num;
+    
+    for(index = num; index < captures.length; ++index) {
+        if((scores[index] > bestScore && maximisingPlayer) ||
+           (scores[index] < bestScore && !maximisingPlayer)) {
+            bestScore = scores[index];
+            bestNum = index;
+        }
+    }
+    
+    if(bestNum != num) {
+        let temp = scores[num];
+        scores[num] = scores[bestNum];
+        scores[bestNum] = temp;
+        
+        temp = captures[num];
+        captures[num] = captures[bestNum];
+        captures[bestNum] = temp;
+    }
+}
+
+var evaluateBoard = function(game) {
+    const board = game.board();
+    
+    // Evaluate material + position using piece-square tables, https://www.chessprogramming.org/Simplified_Evaluation_Function.
+    let total = 0;
+    let wBishop = 0;
+    let bBishop = 0;
     for (var i = 0; i < 8; i++) {
         for (var j = 0; j < 8; j++) {
-            totalEvaluation = totalEvaluation + getPieceValue(board[i][j], i ,j);
+            if(board[i][j] !== null) {
+                total = total + getPieceValue(board[i][j], i, j);
+                
+                if(board[i][j].type === 'b') {
+                    if(board[i][j].color === 'w')
+                        wBishop++;
+                    if(board[i][j].color === 'b')
+                        bBishop++;
+                }
+            }
         }
     }
-    return totalEvaluation;
-};
+    // Single bishop considered weak as only covers light or dark squares.
+    if(wBishop === 1)
+        total -= 50;
+    if(bBishop === 1)
+        total += 50;
+    
+    // Evaluate mobility
+    let mobility = 0;
+    const moves = game.ugly_moves().length;
+    mobility +=  moves * 5;
+    if(moves === 0) {
+        if(game.in_checkmate()) {
+            mobility -= 100000;
+        }
+        if(game.in_draw()) {
+            mobility -= 75000;
+        }
+    }
+    total += game.turn() === 'w' ? mobility : -mobility;
+    
+    // Evaluate attacks.
+    let attack = 0;
+    for (var i = 0; i < 8; i++) {
+        for (var j = 0; j < 8; j++) {
+            if(board[i][j] !== null && game.under_attack(board[i][j].color === 'w' ? 'b' : 'w', getSquare(i, j))) {
+                // Is piece being attacked?
+                const factor = board[i][j].color === 'w' ? -1 : 1;
+                switch(board[i][j].type){
+                   case 'p':
+                    attack += 40 * factor;
+                    break;
+                   case 'b':
+                    attack += 150 * factor;
+                    break;
+                   case 'n':
+                    attack += 150 * factor;
+                    break;
+                   case 'q':
+                    attack += 450 * factor;
+                    break;
+                   case 'r':
+                    attack += 250 * factor;
+                    break;
+                   default:
+               }
+            }
+        } 
+    }
+    if(game.in_check()) {
+        attack += game.turn() === 'w' ? -200 : 200;
+    }
+    
+    total += attack;
+    
+    return total;
+}
+
+var getSquare = function(x, y) {
+    let square = "";
+    switch(y){
+        case 0:
+            square += "a";
+            break;
+        case 1:
+            square += "b";
+            break;
+        case 2:
+            square += "c";
+            break;
+        case 3:
+            square += "d";
+            break;
+        case 4:
+            square += "e";
+            break;
+        case 5:
+            square += "f";
+            break;
+        case 6:
+            square += "g";
+            break;
+        case 7:
+            square += "h";
+            break;
+    }
+    const row = 8 - x;
+    square += row;
+    
+    return square;
+}
+
+var getPieceValue = function(piece, x, y) {
+   let pieceValue = 0;
+   const isWhite = piece.color === 'w';
+   switch(piece.type){
+       case 'p':
+        pieceValue = 100 + (isWhite ? pawnEvalWhite[x][y] : pawnEvalBlack[x][y]) * 10;
+        break;
+       case 'b':
+        pieceValue = 300 + (isWhite ? bishopEvalWhite[x][y] : bishopEvalBlack[x][y]) * 10;
+        break;
+       case 'n':
+        pieceValue = 300 + knightEval[x][y] * 10;
+        break;
+       case 'q':
+        pieceValue = 900 + evalQueen[x][y] * 10;
+        break;
+       case 'r':
+        pieceValue = 500 + (isWhite ? rookEvalWhite[x][y] : rookEvalBlack[x][y]) * 10;
+        break;
+       default:
+   }
+    
+   return isWhite ? pieceValue : -pieceValue;
+}
+
+// Piece-square boards
 
 var reverseArray = function(array) {
     return array.slice().reverse();
@@ -142,42 +422,13 @@ var kingEvalWhite = [
     [ -3.0, -4.0, -4.0, -5.0, -5.0, -4.0, -4.0, -3.0],
     [ -2.0, -3.0, -3.0, -4.0, -4.0, -3.0, -3.0, -2.0],
     [ -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -1.0],
-    [  2.0,  2.0,  0.0,  0.0,  0.0,  0.0,  2.0,  2.0 ],
-    [  2.0,  3.0,  1.0,  0.0,  0.0,  1.0,  3.0,  2.0 ]
+    [  2.0,  2.0,  0.0,  0.0,  0.0,  0.0,  2.0,  2.0],
+    [  2.0,  3.0,  1.0,  0.0,  0.0,  1.0,  3.0,  2.0]
 ];
 
 var kingEvalBlack = reverseArray(kingEvalWhite);
 
-
-
-
-var getPieceValue = function (piece, x, y) {
-    if (piece === null) {
-        return 0;
-    }
-    var getAbsoluteValue = function (piece, isWhite, x ,y) {
-        if (piece.type === 'p') {
-            return 10 + ( isWhite ? pawnEvalWhite[y][x] : pawnEvalBlack[y][x] );
-        } else if (piece.type === 'r') {
-            return 50 + ( isWhite ? rookEvalWhite[y][x] : rookEvalBlack[y][x] );
-        } else if (piece.type === 'n') {
-            return 30 + knightEval[y][x];
-        } else if (piece.type === 'b') {
-            return 30 + ( isWhite ? bishopEvalWhite[y][x] : bishopEvalBlack[y][x] );
-        } else if (piece.type === 'q') {
-            return 90 + evalQueen[y][x];
-        } else if (piece.type === 'k') {
-            return 900 + ( isWhite ? kingEvalWhite[y][x] : kingEvalBlack[y][x] );
-        }
-        throw "Unknown piece type: " + piece.type;
-    };
-
-    var absoluteValue = getAbsoluteValue(piece, piece.color === 'w', x ,y);
-    return piece.color === 'w' ? absoluteValue : -absoluteValue;
-};
-
-
-/* board visualization and games state handling */
+/* board visualization and games state handling starts here*/
 
 var onDragStart = function (source, piece, position, orientation) {
     if (game.in_checkmate() === true || game.in_draw() === true ||
@@ -196,7 +447,6 @@ var makeBestMove = function () {
     }
 };
 
-
 var positionCount;
 var getBestMove = function (game) {
     if (game.game_over()) {
@@ -207,7 +457,7 @@ var getBestMove = function (game) {
     var depth = parseInt($('#search-depth').find(':selected').text());
 
     var d = new Date().getTime();
-    var bestMove = minimaxRoot(depth, game, true);
+    var bestMove = calculateBestMove(game);
     var d2 = new Date().getTime();
     var moveTime = (d2 - d);
     var positionsPerS = ( positionCount * 1000 / moveTime);
@@ -249,6 +499,7 @@ var onSnapEnd = function () {
     board.position(game.fen());
 };
 
+/** Grey square logic for showing where a piece can move **/
 var onMouseoverSquare = function(square, piece) {
     var moves = game.moves({
         square: square,
