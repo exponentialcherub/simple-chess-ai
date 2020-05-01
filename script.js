@@ -1,22 +1,37 @@
+const MAX_DEPTH = 64;
+const PVENTRIES = 10000;
+const NOMOVE = 0;
+
 var board,
     game = new Chess();
+    
+const pvTable = [];
+const pvArray = new Array(MAX_DEPTH);
+let posKey = 0;
 
-/*The "AI" part starts here */
+// Init pvTable.
+for(let index = 0; index < PVENTRIES; ++index) {
+		pvTable.push({
+			move : NOMOVE,
+			posKey : 0
+		});
+}
+
+/* Search */
 
 var calculateBestMove = function(game) {
     var depth = parseInt($('#search-depth').find(':selected').text());
-    var result = minimax(game, depth, -Infinity, Infinity, false);
-    console.log(result[0])
-    console.log(result[1])
-    return result[1];
+    var result = searchRoot(game, depth);
+    
+    return result;
 
 };
 
-var quiescence = function(game, alpha, beta, maximisingPlayer) {
+var quiescence = function(game, alpha, beta) {
     positionCount++;
     var eval = evaluateBoard(game);
     
-    if(eval > beta) {
+    if(eval >= beta) {
         return beta;
     }
     
@@ -24,15 +39,20 @@ var quiescence = function(game, alpha, beta, maximisingPlayer) {
         alpha = eval;
     }
     
+    let oldAlpha = alpha;
+    let bestMove = NOMOVE;
+    
     const captures = game.ugly_captures();
     const scores = getMVVLVAScores(captures);
     
     for(let i = 0; i < captures.length; i++) {
-        nextMove(captures, scores, i, true);
+        nextMove(captures, scores, i);
         
-        game.ugly_move(captures[i]);
-        eval = -quiescence(game, -beta, -alpha, !maximisingPlayer);
+        const oldPosKey = posKey;
+        move(game, captures[i]);
+        eval = -quiescence(game, -beta, -alpha);
         game.undo();
+        posKey = oldPosKey;
         
         if(eval >= beta){
             return beta;
@@ -40,58 +60,96 @@ var quiescence = function(game, alpha, beta, maximisingPlayer) {
         
         if(eval > alpha) {
             alpha = eval;
+            bestMove = captures[i];
         }
+    }
+    
+    if(alpha != oldAlpha) {
+        storePvMove(bestMove);
     }
     
     return alpha;
 }
 
-var minimax = function(game, depth, alpha, beta, maximisingPlayer) {
+var clearForSearch = function() {
+    // Clear pvTable
+    for(let index = 0; index < PVENTRIES; index++) {
+			pvTable[index].move = NOMOVE;
+			pvTable[index].posKey = 0;		
+	}
+}
+
+var searchRoot = function(game, depth) {
+    let bestMove = NOMOVE;
+    let bestScore = -Infinity;
+    let score = -Infinity;
+    let currentDepth = 0;
+    clearForSearch();
+    
+    for(currentDepth = 1; currentDepth <= depth; ++currentDepth) {
+        score = negamax(game, currentDepth, -Infinity, Infinity);
+        
+        /* Time limit stop */
+        
+        bestScore = score;
+        bestMove = probePvTable();
+        console.log("yah")
+    }
+    
+    return bestMove;
+}
+
+var negamax = function(game, depth, alpha, beta) {
     positionCount++;
     if(depth === 0) {
-        return [quiescence(game, alpha, beta, maximisingPlayer), null];
+        return quiescence(game, alpha, beta);
     }
     
-    const newGameMoves = sortMoves(game, maximisingPlayer);
-    let bestMove = newGameMoves[0];
-    
-    if(maximisingPlayer) {
-        let maxEval = -Infinity;
-        for(let i = 0; i < newGameMoves.length; i++) {
-            game.ugly_move(newGameMoves[i]);
-            var eval = minimax(game, depth - 1, alpha, beta, false)[0];
-            game.undo();
-            if(eval > maxEval) {
-                bestMove = newGameMoves[i];
-                maxEval = eval;
-            }
-            
-            alpha = Math.max(alpha, maxEval);
-            if(beta <= alpha) {
-                break;
-            }
-        }
-        return [maxEval, bestMove];
+    if(game.in_check()){
+        depth++;
     }
-    else {
-        let minEval = Infinity;
-        for(let i = 0; i < newGameMoves.length; i++) {
-            game.ugly_move(newGameMoves[i]);
-            var eval = minimax(game, depth - 1, alpha, beta, true)[0];
-            game.undo();
-            if(eval < minEval) {
-                bestMove = newGameMoves[i];
-                minEval = eval;
-            }
-            
-            beta = Math.min(beta, minEval);
-            if(beta <= alpha) {
-                break;
-            }
+    
+    const newGameMoves = game.ugly_moves();
+    const scores = getMVVLVAScores(newGameMoves);//Seems to perform better?? const scores = getScores(game, newGameMoves);//new Array(newGameMoves.length).fill(0); 
+    let oldAlpha = alpha;
+    let bestMove = NOMOVE;
+    
+    var pvMove = probePvTable();
+	if(pvMove != NOMOVE) {
+		for(let i = 0; i < newGameMoves.length; i++) {
+			if(newGameMoves[i].piece === pvMove.piece && newGameMoves[i].from === pvMove.from &&
+               newGameMoves[i].to === pvMove.to && newGameMoves[i].color === pvMove.color) {
+                console.log("Double hit!");
+				scores[i] = 2000000;
+				break;
+			}
+		}
+	}
+    
+    const oldPosKey = posKey;
+    for(let i = 0; i < newGameMoves.length; i++) {
+        nextMove(newGameMoves, scores, i);
+        
+        move(game, newGameMoves[i]);
+        var eval = -negamax(game, depth - 1, -beta, -alpha);
+        game.undo();
+        posKey = oldPosKey;
+        
+        if( eval >= beta ) {
+            return beta;
         }
         
-        return [minEval, bestMove];
+        if( eval > alpha ) {
+            bestMove = newGameMoves[i];
+            alpha = eval;
+        }
     }
+    
+    if(alpha !== oldAlpha) {
+        storePvMove(bestMove);
+    }
+    
+    return alpha;
 }
 
 var getScores = function(game, moves) {
@@ -99,7 +157,7 @@ var getScores = function(game, moves) {
     
     for(let i = 0; i < moves.length; i++) {
         game.ugly_move(moves[i]);
-        scores[i] = evaluateBoard(game);
+        scores[i] = -evaluateBoard(game);
         game.undo();
     }    
     
@@ -111,6 +169,8 @@ var getMVVLVAScores = function(moves) {
     for(let i = 0; i < moves.length; i++) {
         if(!moves[i].captured) {
             console.log("WARN: not a capture move \n" + moves[i]);
+            scores[i] = 0;
+            continue;
         }
         
         scores[i] = 10;
@@ -160,38 +220,38 @@ var getMVVLVAScores = function(moves) {
     return scores;
 }
 
-var sortMoves = function(game, maximisingPlayer) {
+/*
+var sortMoves = function(game) {
     const moves = game.ugly_moves();
     const score = getScores(game, moves);
     
     const bestMoves = [];
     const movesCopy = moves.slice();
     for(let i = 0; i < Math.min(8, moves.length); i++) {
-        let best = maximisingPlayer ? -Infinity : Infinity;
+        let best = -Infinity;
         let bestIndex = 0;
         for(let j = 0; j < score.length; j++) {
-            if((maximisingPlayer && score[j] > best) || (!maximisingPlayer && score[j] < best)) {
+            if(score[j] > best) {
                 best = score[j];
                 bestIndex = j;
             }
         }
         
         bestMoves.push(moves[bestIndex]);
-        score[bestIndex] = maximisingPlayer ? -Infinity : Infinity;
+        score[bestIndex] = -Infinity;
         movesCopy.splice(movesCopy.indexOf(moves[bestIndex]), 1);
     }
     
     return bestMoves.concat(movesCopy);
-}
+}*/
 
-var nextMove = function(captures, scores, num, maximisingPlayer) {
+var nextMove = function(captures, scores, num) {
     let index = 0;
     let bestScore = scores[num];
     let bestNum = num;
     
     for(index = num; index < captures.length; ++index) {
-        if((scores[index] > bestScore && maximisingPlayer) ||
-           (scores[index] < bestScore && !maximisingPlayer)) {
+        if(scores[index] > bestScore) {
             bestScore = scores[index];
             bestNum = index;
         }
@@ -207,6 +267,8 @@ var nextMove = function(captures, scores, num, maximisingPlayer) {
         captures[bestNum] = temp;
     }
 }
+
+/* Evaluate */
 
 var evaluateBoard = function(game) {
     const board = game.board();
@@ -238,7 +300,7 @@ var evaluateBoard = function(game) {
     // Evaluate mobility
     let mobility = 0;
     const moves = game.ugly_moves().length;
-    mobility +=  moves * 5;
+    //mobility +=  moves * 5;
     if(moves === 0) {
         if(game.in_checkmate()) {
             mobility -= 100000;
@@ -281,9 +343,9 @@ var evaluateBoard = function(game) {
         attack += game.turn() === 'w' ? -200 : 200;
     }
     
-    total += attack;
+    //total += attack;
     
-    return total;
+    return game.turn() === 'w' ? total : -total;
 }
 
 var getSquare = function(x, y) {
@@ -427,6 +489,31 @@ var kingEvalWhite = [
 ];
 
 var kingEvalBlack = reverseArray(kingEvalWhite);
+
+/* PvTable */
+
+function probePvTable() {
+	var index = posKey % PVENTRIES;
+	
+	if(pvTable[index].posKey === posKey) {
+        console.log("Hit!");
+		return pvTable[index].move;
+	}
+	
+	return NOMOVE;
+}
+
+function storePvMove(move) {
+	var index = posKey % PVENTRIES;
+	pvTable[index].posKey = posKey;
+	pvTable[index].move = move;
+}
+
+function move(game, move) {
+    game.ugly_move(move);
+    //posKey = makeMove(posKey, move);
+    posKey = generatePosKey(game.board(), game.turn());
+}
 
 /* board visualization and games state handling starts here*/
 
