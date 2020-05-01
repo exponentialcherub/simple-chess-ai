@@ -9,6 +9,11 @@ const pvTable = [];
 const pvArray = new Array(MAX_DEPTH);
 let posKey = 0;
 
+const searchKillers = new Array(3 * MAX_DEPTH);
+const searchHistory = new Array(14 * 120);
+
+let ply = 0;
+
 // Init pvTable.
 for(let index = 0; index < PVENTRIES; ++index) {
 		pvTable.push({
@@ -28,6 +33,7 @@ var calculateBestMove = function(game) {
 };
 
 var quiescence = function(game, alpha, beta) {
+    ply++;
     positionCount++;
     var eval = evaluateBoard(game);
     
@@ -53,6 +59,7 @@ var quiescence = function(game, alpha, beta) {
         eval = -quiescence(game, -beta, -alpha);
         game.undo();
         posKey = oldPosKey;
+        ply--;
         
         if(eval >= beta){
             return beta;
@@ -77,6 +84,10 @@ var clearForSearch = function() {
 			pvTable[index].move = NOMOVE;
 			pvTable[index].posKey = 0;		
 	}
+    
+    for(let index = 0; index < 3 * MAX_DEPTH; index++) {
+        searchKillers[index] = 0;
+    }
 }
 
 var searchRoot = function(game, depth) {
@@ -100,6 +111,7 @@ var searchRoot = function(game, depth) {
 }
 
 var negamax = function(game, depth, alpha, beta) {
+    ply++;
     positionCount++;
     if(depth === 0) {
         return quiescence(game, alpha, beta);
@@ -110,15 +122,14 @@ var negamax = function(game, depth, alpha, beta) {
     }
     
     const newGameMoves = game.ugly_moves();
-    const scores = getMVVLVAScores(newGameMoves);//Seems to perform better?? const scores = getScores(game, newGameMoves);//new Array(newGameMoves.length).fill(0); 
+    const scores = getScores(game, newGameMoves);//new Array(newGameMoves.length).fill(0); 
     let oldAlpha = alpha;
     let bestMove = NOMOVE;
     
     var pvMove = probePvTable();
 	if(pvMove != NOMOVE) {
 		for(let i = 0; i < newGameMoves.length; i++) {
-			if(newGameMoves[i].piece === pvMove.piece && newGameMoves[i].from === pvMove.from &&
-               newGameMoves[i].to === pvMove.to && newGameMoves[i].color === pvMove.color) {
+			if(compareMoves(newGameMoves[i], pvMove)) {
                 console.log("Double hit!");
 				scores[i] = 2000000;
 				break;
@@ -134,12 +145,22 @@ var negamax = function(game, depth, alpha, beta) {
         var eval = -negamax(game, depth - 1, -beta, -alpha);
         game.undo();
         posKey = oldPosKey;
+        ply--;
         
         if( eval >= beta ) {
+            if(!newGameMoves[i].captured) {
+                searchKillers[MAX_DEPTH + ply] = searchKillers[ply];
+                searchKillers[ply] = newGameMoves[i];
+            }
+            
             return beta;
         }
         
         if( eval > alpha ) {
+            if(!newGameMoves[i].captured) {
+                searchHistory[getPiece(newGameMoves[i]) * 120 + newGameMoves[i].to] = depth * depth;
+            }
+            
             bestMove = newGameMoves[i];
             alpha = eval;
         }
@@ -152,13 +173,37 @@ var negamax = function(game, depth, alpha, beta) {
     return alpha;
 }
 
+var compareMoves = function(move1, move2) {
+    if(!move1 || !move2) {
+        return false;
+    }
+    
+    return move1.piece === move2.piece && move1.from === move2.from &&
+               move1.to === move2.to && move1.color === move2.color;
+}
+
 var getScores = function(game, moves) {
-    const scores = [];
+    // Captures first.
+    const scores = getMVVLVAScores(moves);
     
     for(let i = 0; i < moves.length; i++) {
-        game.ugly_move(moves[i]);
-        scores[i] = -evaluateBoard(game);
-        game.undo();
+        if(moves[i].captured){
+            scores[i] += 1000000;
+            continue;
+        }
+        
+        // Killer moves.
+        if(compareMoves(moves[i], searchKillers[ply])) {
+            scores[i] = 900000;
+        }
+        else if(compareMoves(moves[i], searchKillers[MAX_DEPTH + ply])) {
+            scores[i] = 800000;
+        }
+        else {
+            // History
+            scores[i] = searchHistory[getPiece(moves[i]) * 120 + moves[i].to];
+        }
+        
     }    
     
     return scores;
@@ -168,7 +213,6 @@ var getMVVLVAScores = function(moves) {
     const scores = [];
     for(let i = 0; i < moves.length; i++) {
         if(!moves[i].captured) {
-            console.log("WARN: not a capture move \n" + moves[i]);
             scores[i] = 0;
             continue;
         }
