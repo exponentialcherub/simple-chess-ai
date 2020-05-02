@@ -4,10 +4,10 @@ var CastleKeys = new Array(16);
 
 InitHashKeys();
 
-const makeMove = function(posKey, move) {
+/*const makeMove = function(posKey, move) {
     
     return posKey;
-}
+}*/
 
 const generatePosKey = function(board, turn) {
     var sq = 0;

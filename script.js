@@ -48,14 +48,15 @@ var quiescence = function(game, alpha, beta) {
     let oldAlpha = alpha;
     let bestMove = NOMOVE;
     
-    const captures = game.ugly_captures();
-    const scores = getMVVLVAScores(captures);
+    let scores = [];
+    const captures = game.ugly_captures({scoreFunc: getScore, scores: scores});
+    //const scores = getMVVLVAScores(captures);
     
     for(let i = 0; i < captures.length; i++) {
         nextMove(captures, scores, i);
         
         const oldPosKey = posKey;
-        move(game, captures[i]);
+        makeMove(game, captures[i]);
         eval = -quiescence(game, -beta, -alpha);
         game.undo();
         posKey = oldPosKey;
@@ -121,11 +122,12 @@ var negamax = function(game, depth, alpha, beta) {
         depth++;
     }
     
-    const newGameMoves = game.ugly_moves();
-    const scores = getScores(game, newGameMoves);//new Array(newGameMoves.length).fill(0); 
+    let scores = [];
+    const newGameMoves = game.ugly_moves({scoreFunc: getScore, scores: scores});
+    //const scores = getScores(newGameMoves);//new Array(newGameMoves.length).fill(0); 
     let oldAlpha = alpha;
     let bestMove = NOMOVE;
-    
+    //console.log(scores);
     var pvMove = probePvTable();
 	if(pvMove != NOMOVE) {
 		for(let i = 0; i < newGameMoves.length; i++) {
@@ -141,7 +143,7 @@ var negamax = function(game, depth, alpha, beta) {
     for(let i = 0; i < newGameMoves.length; i++) {
         nextMove(newGameMoves, scores, i);
         
-        move(game, newGameMoves[i]);
+        makeMove(game, newGameMoves[i]);
         var eval = -negamax(game, depth - 1, -beta, -alpha);
         game.undo();
         posKey = oldPosKey;
@@ -182,7 +184,71 @@ var compareMoves = function(move1, move2) {
                move1.to === move2.to && move1.color === move2.color;
 }
 
-var getScores = function(game, moves) {
+var getScore = function(move) {
+    let score = 0;
+    
+    if(move.captured){
+            score += 1000000;
+            switch(move.captured) {
+                case 'k': 
+                    score += 1000;
+                case 'q':
+                    score += 900;
+                    break;
+                case 'r':
+                    score += 500;
+                    break;
+                case 'b':
+                    score += 400;
+                    break;
+                case 'n':
+                    score += 300;
+                    break;
+                case 'p':
+                    score += 100;
+                
+            }
+            switch(move.piece){
+                case 'k':
+                    score -= 10;
+                    break;
+                case 'q':
+                    score -= 9;
+                    break;
+                case 'r':
+                    score -= 5;
+                    break;
+                case 'b':
+                    score -= 4;
+                    break;
+                case 'n':
+                    score -= 3;
+                    break;
+                case 'p':
+                    score -= 1;
+                    break;
+                
+            }
+            
+            return score;
+        }
+        
+        // Killer moves.
+        if(compareMoves(move, searchKillers[ply])) {
+            score = 900000;
+        }
+        else if(compareMoves(move, searchKillers[MAX_DEPTH + ply])) {
+            score = 800000;
+        }
+        else {
+            // History
+            score = searchHistory[getPiece(move) * 120 + move.to];
+        }
+        
+        return score;
+}
+
+var getScores = function(moves) {
     // Captures first.
     const scores = getMVVLVAScores(moves);
     
@@ -264,31 +330,6 @@ var getMVVLVAScores = function(moves) {
     return scores;
 }
 
-/*
-var sortMoves = function(game) {
-    const moves = game.ugly_moves();
-    const score = getScores(game, moves);
-    
-    const bestMoves = [];
-    const movesCopy = moves.slice();
-    for(let i = 0; i < Math.min(8, moves.length); i++) {
-        let best = -Infinity;
-        let bestIndex = 0;
-        for(let j = 0; j < score.length; j++) {
-            if(score[j] > best) {
-                best = score[j];
-                bestIndex = j;
-            }
-        }
-        
-        bestMoves.push(moves[bestIndex]);
-        score[bestIndex] = -Infinity;
-        movesCopy.splice(movesCopy.indexOf(moves[bestIndex]), 1);
-    }
-    
-    return bestMoves.concat(movesCopy);
-}*/
-
 var nextMove = function(captures, scores, num) {
     let index = 0;
     let bestScore = scores[num];
@@ -343,9 +384,9 @@ var evaluateBoard = function(game) {
     
     // Evaluate mobility
     let mobility = 0;
-    const moves = game.ugly_moves().length;
+    //const moves = game.ugly_moves().length; slow pass numMoves in.
     //mobility +=  moves * 5;
-    if(moves === 0) {
+    if(true) { //moves == 0
         if(game.in_checkmate()) {
             mobility -= 100000;
         }
@@ -553,7 +594,7 @@ function storePvMove(move) {
 	pvTable[index].move = move;
 }
 
-function move(game, move) {
+function makeMove(game, move) {
     game.ugly_move(move);
     //posKey = makeMove(posKey, move);
     posKey = generatePosKey(game.board(), game.turn());
